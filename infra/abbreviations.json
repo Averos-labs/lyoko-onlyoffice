@@ -1,0 +1,6 @@
+{
+  "resourcesResourceGroups": "rg-",
+  "storageStorageAccounts": "st",
+  "appManagedEnvironments": "cae-",
+  "appContainerApps": "ca-"
+}
