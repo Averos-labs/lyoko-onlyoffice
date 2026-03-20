@@ -1,0 +1,41 @@
+{
+  "version": "1.0",
+  "name": "Example Flow",
+  "created": "2026-02-25T00:00:00",
+  "modified": "2026-02-25T00:00:00",
+  "nodes": [
+    {
+      "id": "text-1",
+      "type": "text",
+      "position": {
+        "x": 100,
+        "y": 100
+      },
+      "data": {
+        "label": null,
+        "state": "complete",
+        "content": "Hello, Creative Studio!",
+        "path": null,
+        "model": null,
+        "params": null,
+        "runs": 1,
+        "variations": [],
+        "selectedVariation": 0,
+        "width": null,
+        "height": null,
+        "duration": null,
+        "error": null
+      },
+      "width": null,
+      "height": null,
+      "selected": null,
+      "dragging": null
+    }
+  ],
+  "edges": [],
+  "viewport": {
+    "x": 0,
+    "y": 0,
+    "zoom": 1
+  }
+}
