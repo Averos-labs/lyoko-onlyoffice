@@ -1,0 +1,25 @@
+#===============================================================================
+# LYOKO ONLYOFFICE - CONFIGMAP
+#===============================================================================
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: onlyoffice-config
+  namespace: lyoko-onlyoffice
+data:
+  # JWT Configuration
+  jwt-enabled: "true"
+  jwt-header: "Authorization"
+  jwt-in-body: "true"
+  
+  # WOPI Configuration (for future Office integrations)
+  wopi-enabled: "false"
+  
+  # Connection limits
+  max-connections: "100"
+  
+  # File size limits (in bytes) - 100MB
+  file-size-limit: "104857600"
+  
+  # Document server URL (will be set by ingress)
+  server-url: "https://onlyoffice.lyoko.app"

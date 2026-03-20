@@ -1,0 +1,119 @@
+name: Test OnlyOffice Autoscaling
+
+on:
+  workflow_dispatch:
+    inputs:
+      concurrent_requests:
+        description: 'Number of concurrent document conversions'
+        required: true
+        default: '20'
+        type: string
+      duration_seconds:
+        description: 'Test duration in seconds'
+        required: true
+        default: '300'
+        type: string
+
+env:
+  AZURE_RESOURCE_GROUP: rg-lyoko
+  AKS_CLUSTER_NAME: lyoko-aks
+
+jobs:
+  load-test:
+    name: Autoscaling Load Test
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER_NAME }} \
+            --overwrite-existing
+
+      - name: Get OnlyOffice URL
+        id: get-url
+        run: |
+          EXTERNAL_IP=$(kubectl get svc onlyoffice-external -n lyoko-onlyoffice \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
+          echo "url=http://$EXTERNAL_IP" >> $GITHUB_OUTPUT
+          echo "OnlyOffice URL: http://$EXTERNAL_IP"
+
+      - name: Initial state
+        run: |
+          echo "=== Initial Pod State ==="
+          kubectl get pods -n lyoko-onlyoffice
+          echo ""
+          echo "=== Initial HPA State ==="
+          kubectl get hpa -n lyoko-onlyoffice
+          echo ""
+          echo "=== Initial Node Pool ==="
+          kubectl get nodes -l workload=onlyoffice
+
+      - name: Install hey (HTTP load generator)
+        run: |
+          wget https://hey-release.s3.us-east-2.amazonaws.com/hey_linux_amd64
+          chmod +x hey_linux_amd64
+          sudo mv hey_linux_amd64 /usr/local/bin/hey
+
+      - name: Run load test
+        run: |
+          echo "Starting load test..."
+          echo "Concurrent requests: ${{ inputs.concurrent_requests }}"
+          echo "Duration: ${{ inputs.duration_seconds }}s"
+          echo ""
+          
+          # Generate load - hit the info endpoint repeatedly
+          hey -z ${{ inputs.duration_seconds }}s \
+              -c ${{ inputs.concurrent_requests }} \
+              -m GET \
+              "${{ steps.get-url.outputs.url }}/info/info.json" &
+          
+          HEY_PID=$!
+          
+          # Monitor scaling during test
+          for i in $(seq 1 $(((${{ inputs.duration_seconds }} / 30) + 1))); do
+            echo ""
+            echo "=== Check $i ($(($i * 30))s) ==="
+            kubectl get hpa -n lyoko-onlyoffice
+            kubectl get pods -n lyoko-onlyoffice
+            kubectl get nodes -l workload=onlyoffice
+            sleep 30
+          done
+          
+          wait $HEY_PID || true
+
+      - name: Final state
+        run: |
+          echo ""
+          echo "=== Final Pod State ==="
+          kubectl get pods -n lyoko-onlyoffice -o wide
+          echo ""
+          echo "=== Final HPA State ==="
+          kubectl get hpa -n lyoko-onlyoffice
+          echo ""
+          echo "=== Final Node Pool ==="
+          kubectl get nodes -l workload=onlyoffice
+          echo ""
+          echo "=== Pod Events ==="
+          kubectl get events -n lyoko-onlyoffice --sort-by='.lastTimestamp' | tail -20
+
+      - name: Wait for scale down
+        if: always()
+        run: |
+          echo "Waiting 5 minutes for scale down..."
+          sleep 300
+          
+          echo ""
+          echo "=== Post-cooldown State ==="
+          kubectl get hpa -n lyoko-onlyoffice
+          kubectl get pods -n lyoko-onlyoffice
+          kubectl get nodes -l workload=onlyoffice

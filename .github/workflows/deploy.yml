@@ -1,0 +1,141 @@
+name: Deploy OnlyOffice to AKS
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'k8s/**'
+      - '.github/workflows/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Deploy environment'
+        required: true
+        default: 'production'
+        type: choice
+        options:
+          - production
+          - staging
+
+env:
+  AZURE_RESOURCE_GROUP: rg-lyoko
+  AKS_CLUSTER_NAME: lyoko-aks
+
+jobs:
+  deploy:
+    name: Deploy to AKS
+    runs-on: ubuntu-latest
+    environment: production
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Azure Login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Set up kubectl
+        uses: azure/setup-kubectl@v4
+        with:
+          version: 'latest'
+
+      - name: Get AKS credentials
+        run: |
+          az aks get-credentials \
+            --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+            --name ${{ env.AKS_CLUSTER_NAME }} \
+            --overwrite-existing
+
+      - name: Ensure OnlyOffice node pool exists
+        run: |
+          # Check if node pool exists
+          if ! az aks nodepool show \
+              --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+              --cluster-name ${{ env.AKS_CLUSTER_NAME }} \
+              --name onlyoffice &>/dev/null; then
+            echo "Creating onlyoffice node pool..."
+            az aks nodepool add \
+              --resource-group ${{ env.AZURE_RESOURCE_GROUP }} \
+              --cluster-name ${{ env.AKS_CLUSTER_NAME }} \
+              --name onlyoffice \
+              --node-count 1 \
+              --min-count 1 \
+              --max-count 5 \
+              --enable-cluster-autoscaler \
+              --node-vm-size Standard_D4s_v3 \
+              --labels workload=onlyoffice \
+              --node-taints workload=onlyoffice:NoSchedule \
+              --mode User \
+              --os-type Linux
+          else
+            echo "Node pool 'onlyoffice' already exists"
+          fi
+
+      - name: Deploy namespace and quotas
+        run: kubectl apply -f k8s/00-namespace.yaml
+
+      - name: Deploy secrets
+        env:
+          ONLYOFFICE_JWT_SECRET: ${{ secrets.ONLYOFFICE_JWT_SECRET }}
+        run: |
+          cat k8s/01-secrets.yaml | envsubst | kubectl apply -f -
+
+      - name: Deploy configmap
+        run: kubectl apply -f k8s/02-configmap.yaml
+
+      - name: Deploy PVCs
+        run: kubectl apply -f k8s/03-pvc.yaml
+
+      - name: Deploy application
+        run: |
+          kubectl apply -f k8s/04-deployment.yaml
+          kubectl apply -f k8s/05-service.yaml
+          kubectl apply -f k8s/06-hpa.yaml
+
+      - name: Wait for deployment
+        run: |
+          kubectl rollout status deployment/onlyoffice-documentserver \
+            -n lyoko-onlyoffice \
+            --timeout=600s
+
+      - name: Get deployment info
+        run: |
+          echo "=== Pods ==="
+          kubectl get pods -n lyoko-onlyoffice -o wide
+          
+          echo ""
+          echo "=== Services ==="
+          kubectl get svc -n lyoko-onlyoffice
+          
+          echo ""
+          echo "=== HPA ==="
+          kubectl get hpa -n lyoko-onlyoffice
+          
+          echo ""
+          echo "=== LoadBalancer IP ==="
+          kubectl get svc onlyoffice-external -n lyoko-onlyoffice \
+            -o jsonpath='{.status.loadBalancer.ingress[0].ip}'
+          echo ""
+
+      - name: Health check
+        run: |
+          # Wait for LoadBalancer IP
+          for i in {1..30}; do
+            EXTERNAL_IP=$(kubectl get svc onlyoffice-external -n lyoko-onlyoffice \
+              -o jsonpath='{.status.loadBalancer.ingress[0].ip}' 2>/dev/null || echo "")
+            if [ -n "$EXTERNAL_IP" ]; then
+              break
+            fi
+            echo "Waiting for LoadBalancer IP..."
+            sleep 10
+          done
+          
+          if [ -n "$EXTERNAL_IP" ]; then
+            echo "Testing health endpoint..."
+            curl -sf "http://$EXTERNAL_IP/healthcheck" && echo "Health check passed!" || echo "Health check pending (service may still be starting)"
+          else
+            echo "LoadBalancer IP not yet assigned"
+          fi

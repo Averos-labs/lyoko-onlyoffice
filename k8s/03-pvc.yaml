@@ -1,0 +1,42 @@
+#===============================================================================
+# LYOKO ONLYOFFICE - PERSISTENT VOLUME CLAIMS
+#===============================================================================
+# Data storage for OnlyOffice documents and cache
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: onlyoffice-data
+  namespace: lyoko-onlyoffice
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: onlyoffice-cache
+  namespace: lyoko-onlyoffice
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 20Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: onlyoffice-logs
+  namespace: lyoko-onlyoffice
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: managed-csi
+  resources:
+    requests:
+      storage: 10Gi

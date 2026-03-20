@@ -1,0 +1,38 @@
+#===============================================================================
+# LYOKO ONLYOFFICE - NAMESPACE & RESOURCE QUOTA
+#===============================================================================
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: lyoko-onlyoffice
+  labels:
+    app.kubernetes.io/name: lyoko-onlyoffice
+    app.kubernetes.io/part-of: lyoko
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: onlyoffice-quota
+  namespace: lyoko-onlyoffice
+spec:
+  hard:
+    requests.cpu: "20"
+    requests.memory: 40Gi
+    limits.cpu: "40"
+    limits.memory: 80Gi
+    pods: "10"
+---
+apiVersion: v1
+kind: LimitRange
+metadata:
+  name: onlyoffice-limits
+  namespace: lyoko-onlyoffice
+spec:
+  limits:
+    - default:
+        cpu: "2"
+        memory: 4Gi
+      defaultRequest:
+        cpu: "1"
+        memory: 2Gi
+      type: Container

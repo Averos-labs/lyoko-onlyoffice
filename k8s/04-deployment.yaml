@@ -1,0 +1,173 @@
+#===============================================================================
+# LYOKO ONLYOFFICE - DEPLOYMENT
+#===============================================================================
+# Production-ready OnlyOffice Document Server with:
+# - Dedicated node pool with tolerations
+# - Health checks for zero-downtime deployments
+# - Resource limits for stability
+# - Persistent storage for documents
+#===============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: onlyoffice-documentserver
+  namespace: lyoko-onlyoffice
+  labels:
+    app: onlyoffice
+    app.kubernetes.io/name: onlyoffice
+    app.kubernetes.io/part-of: lyoko
+    app.kubernetes.io/component: document-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: onlyoffice
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  template:
+    metadata:
+      labels:
+        app: onlyoffice
+        app.kubernetes.io/name: onlyoffice
+        app.kubernetes.io/part-of: lyoko
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "80"
+        prometheus.io/path: "/info/info.json"
+    spec:
+      # Schedule on dedicated onlyoffice node pool
+      nodeSelector:
+        workload: onlyoffice
+      
+      # Tolerate the onlyoffice taint
+      tolerations:
+        - key: "workload"
+          operator: "Equal"
+          value: "onlyoffice"
+          effect: "NoSchedule"
+      
+      # Graceful shutdown (OnlyOffice needs time to save docs)
+      terminationGracePeriodSeconds: 60
+      
+      # Security context
+      securityContext:
+        fsGroup: 104  # onlyoffice group
+      
+      containers:
+        - name: documentserver
+          image: onlyoffice/documentserver:8.2
+          imagePullPolicy: IfNotPresent
+          
+          ports:
+            - containerPort: 80
+              protocol: TCP
+              name: http
+          
+          env:
+            # JWT Configuration
+            - name: JWT_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: onlyoffice-config
+                  key: jwt-enabled
+            - name: JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: onlyoffice-secrets
+                  key: jwt-secret
+            - name: JWT_HEADER
+              valueFrom:
+                configMapKeyRef:
+                  name: onlyoffice-config
+                  key: jwt-header
+            - name: JWT_IN_BODY
+              valueFrom:
+                configMapKeyRef:
+                  name: onlyoffice-config
+                  key: jwt-in-body
+            
+            # WOPI
+            - name: WOPI_ENABLED
+              valueFrom:
+                configMapKeyRef:
+                  name: onlyoffice-config
+                  key: wopi-enabled
+            
+            # Performance tuning
+            - name: NGINX_WORKER_CONNECTIONS
+              value: "4096"
+            - name: DS_EXAMPLE
+              value: "false"
+          
+          resources:
+            requests:
+              cpu: "1"
+              memory: 2Gi
+            limits:
+              cpu: "4"
+              memory: 8Gi
+          
+          # Volume mounts for persistence
+          volumeMounts:
+            - name: data
+              mountPath: /var/www/onlyoffice/Data
+            - name: cache
+              mountPath: /var/lib/onlyoffice
+            - name: logs
+              mountPath: /var/log/onlyoffice
+          
+          # Health checks
+          startupProbe:
+            httpGet:
+              path: /healthcheck
+              port: 80
+            initialDelaySeconds: 30
+            periodSeconds: 10
+            failureThreshold: 30  # 5 minutes to start
+            timeoutSeconds: 5
+          
+          livenessProbe:
+            httpGet:
+              path: /healthcheck
+              port: 80
+            initialDelaySeconds: 0
+            periodSeconds: 30
+            failureThreshold: 3
+            timeoutSeconds: 10
+          
+          readinessProbe:
+            httpGet:
+              path: /healthcheck
+              port: 80
+            initialDelaySeconds: 0
+            periodSeconds: 10
+            failureThreshold: 3
+            timeoutSeconds: 5
+      
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: onlyoffice-data
+        - name: cache
+          persistentVolumeClaim:
+            claimName: onlyoffice-cache
+        - name: logs
+          persistentVolumeClaim:
+            claimName: onlyoffice-logs
+---
+#===============================================================================
+# POD DISRUPTION BUDGET - Ensure availability during updates
+#===============================================================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: onlyoffice-pdb
+  namespace: lyoko-onlyoffice
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: onlyoffice

@@ -1,177 +1,205 @@
 # Lyoko OnlyOffice Document Server
 
-This project deploys OnlyOffice Document Server to Azure Container Apps using Azure Developer CLI (azd).
+Production-ready OnlyOffice Document Server deployment for AKS with autoscaling.
 
-## Prerequisites
+## Architecture
 
-- Azure Developer CLI ([Install azd](https://learn.microsoft.com/azure/developer/azure-developer-cli/install-azd))
-- Azure subscription
-- Azure CLI (for authentication)
+```
+AKS Cluster (lyoko-aks)
+├── System Pool (D2s_v3) - orchestrator, redis
+├── Sandbox Pool (D4s_v3, 1-10) - sandbox workers
+└── OnlyOffice Pool (D4s_v3, 1-5) - document server ← NEW
+    └── HPA: 1-5 pods based on CPU/memory
+```
 
-## Quick Start
+## Deployment Options
 
-### 1. Login to Azure
+### Option 1: AKS (Production) - Recommended
 
-```powershell
+Uses the existing AKS cluster with a dedicated node pool.
+
+#### Prerequisites
+
+- Azure CLI with `az aks` access
+- kubectl configured for `lyoko-aks`
+- GitHub Actions secrets configured
+
+#### Quick Deploy
+
+```bash
+# 1. Set up dedicated node pool (one-time)
+chmod +x k8s/setup-nodepool.sh
+./k8s/setup-nodepool.sh
+
+# 2. Generate JWT secret
+export ONLYOFFICE_JWT_SECRET=$(openssl rand -hex 32)
+
+# 3. Deploy
+chmod +x k8s/deploy.sh
+./k8s/deploy.sh
+```
+
+#### CI/CD Deployment
+
+Push to `main` branch triggers automatic deployment via GitHub Actions.
+
+Required GitHub Secrets:
+- `AZURE_CREDENTIALS` - Service principal JSON
+- `ONLYOFFICE_JWT_SECRET` - JWT authentication secret
+
+### Option 2: Azure Container Apps (Legacy)
+
+Using Azure Developer CLI:
+
+```bash
 azd auth login
-```
-
-### 2. Initialize Environment
-
-```powershell
-# Copy environment template
 cp .env.example .env
-
-# Edit .env and set:
-# - AZURE_ENV_NAME (e.g., lyoko-onlyoffice-dev)
-# - AZURE_LOCATION (e.g., eastus)
-# - AZURE_SUBSCRIPTION_ID (optional)
-```
-
-### 3. Deploy to Azure
-
-```powershell
 azd up
 ```
 
-This command will:
-- Provision all Azure resources (Container App, Storage, etc.)
-- Deploy OnlyOffice Document Server
-- Output the OnlyOffice URL and JWT secret
+### Option 3: Local Development
 
-### 4. Get Configuration
-
-After deployment, get the OnlyOffice URL:
-
-```powershell
-azd env get-values
+```bash
+docker-compose up -d
 ```
 
-Look for:
-- `ONLYOFFICE_URL` - The public URL of your OnlyOffice server
-- `ONLYOFFICE_JWT_ENABLED` - Should be "true"
+Access at: http://localhost:8080
 
-The JWT secret is stored securely in Azure. To retrieve it:
+## Kubernetes Manifests
 
-```powershell
-az containerapp show --name <container-app-name> --resource-group <resource-group> --query "properties.template.containers[0].env[?name=='JWT_SECRET'].secretRef" -o tsv
+| File | Purpose |
+|------|---------|
+| `00-namespace.yaml` | Namespace, ResourceQuota, LimitRange |
+| `01-secrets.yaml` | JWT secret (template) |
+| `02-configmap.yaml` | Configuration |
+| `03-pvc.yaml` | Persistent storage (50GB data, 20GB cache) |
+| `04-deployment.yaml` | OnlyOffice deployment + PDB |
+| `05-service.yaml` | ClusterIP + LoadBalancer services |
+| `06-hpa.yaml` | Horizontal Pod Autoscaler |
+| `07-ingress.yaml` | Ingress (optional) |
+
+## Autoscaling Configuration
+
+### HPA (Pod Autoscaling)
+- **Min replicas**: 1 (always warm - no cold start latency)
+- **Max replicas**: 5
+- **Scale up triggers**: CPU > 70% or Memory > 80%
+- **Scale up policy**: Add up to 2 pods per minute
+- **Scale down policy**: Remove 1 pod every 2 minutes (stabilization: 5 min)
+
+### Node Pool (Cluster Autoscaling)
+- **Min nodes**: 1
+- **Max nodes**: 5
+- **VM Size**: Standard_D4s_v3 (4 vCPU, 16GB RAM)
+- **Taints**: `workload=onlyoffice:NoSchedule` (dedicated)
+
+## Resource Allocation
+
+Per pod:
+- **CPU**: 1 core request, 4 cores limit
+- **Memory**: 2GB request, 8GB limit
+
+Per PVC:
+- **Data**: 50GB (documents)
+- **Cache**: 20GB (conversion cache)
+- **Logs**: 10GB
+
+## Testing Autoscaling
+
+### Manual Test
+
+```bash
+# Watch HPA and pods
+watch -n5 'kubectl get hpa,pods -n lyoko-onlyoffice'
+
+# Generate load (in another terminal)
+hey -z 300s -c 20 "http://<LOADBALANCER_IP>/info/info.json"
 ```
 
-## What Gets Deployed
+### GitHub Actions Test
 
-- **Container App Environment** - Hosting environment for containers
-- **OnlyOffice Container App** - Document Server with 2 CPU / 4GB RAM
-  - Auto-scales from 1 to 5 replicas based on load
-  - JWT authentication enabled for security
-- **Storage Account** - Persistent storage for:
-  - Document data
-  - Cache files
-  - Logs
-- **Log Analytics** - For monitoring and diagnostics
+Run the `Test OnlyOffice Autoscaling` workflow:
+1. Go to Actions → Test OnlyOffice Autoscaling
+2. Set concurrent requests (default: 20)
+3. Set duration (default: 300s)
+4. Run workflow
 
-## Configuration
+## Configuration for lyoko-web
 
-### Environment Variables
-
-OnlyOffice is configured with:
-- `JWT_ENABLED=true` - JWT authentication enabled
-- `JWT_SECRET` - Auto-generated secret (stored in Azure secrets)
-- `JWT_HEADER=Authorization` - JWT in Authorization header
-- `JWT_IN_BODY=true` - JWT also in request body
-
-### Resource Specifications
-
-- **CPU**: 2 cores
-- **Memory**: 4 GB
-- **Storage**: 
-  - 100 GB for data
-  - 50 GB for cache
-  - 10 GB for logs
-
-### Scaling
-
-Auto-scales based on:
-- Concurrent requests (max 10 per instance)
-- Min replicas: 1
-- Max replicas: 5
-
-## Using with Lyoko Web
-
-### Local Development
-
-In your `lyoko-web/server/.env`:
+Add to `lyoko-web/server/.env`:
 
 ```env
-ONLYOFFICE_SERVER_URL=https://<your-onlyoffice-url>
+# Get IP: kubectl get svc onlyoffice-external -n lyoko-onlyoffice
+ONLYOFFICE_SERVER_URL=http://<LOADBALANCER_IP>
 ONLYOFFICE_JWT_SECRET=<your-jwt-secret>
 ONLYOFFICE_JWT_ENABLED=true
 ```
 
-### Testing
-
-1. Start your local web server
-2. Upload an Excel file
-3. Open it - should load OnlyOffice editor from Azure
-4. Make edits - should save back to your local server
-
 ## Monitoring
 
-### View Logs
+### Check Status
 
-```powershell
-# Stream live logs
-az containerapp logs tail --name <container-app-name> --resource-group <resource-group> --follow
+```bash
+# All resources
+kubectl get all -n lyoko-onlyoffice
 
-# View in Azure Portal
-azd show --output json | jq -r '.resourceGroupName' | xargs -I {} az monitor log-analytics workspace list --resource-group {} --query "[0].id" -o tsv
+# HPA details
+kubectl describe hpa onlyoffice-hpa -n lyoko-onlyoffice
+
+# Pod logs
+kubectl logs -f deployment/onlyoffice-documentserver -n lyoko-onlyoffice
 ```
 
 ### Health Check
 
-```powershell
-curl https://<your-onlyoffice-url>/healthcheck
-```
-
-## Costs
-
-Estimated monthly cost (assuming low usage):
-- Container App: ~$30-50/month (with auto-scaling)
-- Storage Account: ~$5-10/month
-- Log Analytics: ~$5/month
-
-**Total**: ~$40-65/month
-
-## Cleanup
-
-To delete all resources:
-
-```powershell
-azd down
+```bash
+curl http://<LOADBALANCER_IP>/healthcheck
 ```
 
 ## Troubleshooting
 
-### Container won't start
+### Pod not scheduling
 
-Check logs:
-```powershell
-az containerapp logs tail --name <name> --resource-group <rg> --follow
+Check node pool and tolerations:
+```bash
+kubectl get nodes -l workload=onlyoffice
+kubectl describe pod -n lyoko-onlyoffice
 ```
 
-### Storage mount issues
+### PVC pending
 
-Verify storage account and file shares exist:
-```powershell
-az storage share list --account-name <storage-account>
+Check storage class:
+```bash
+kubectl get pvc -n lyoko-onlyoffice
+kubectl get sc
 ```
 
 ### JWT errors
 
-Ensure JWT secret matches between OnlyOffice and your web server.
+Verify secret matches:
+```bash
+kubectl get secret onlyoffice-secrets -n lyoko-onlyoffice -o jsonpath='{.data.jwt-secret}' | base64 -d
+```
 
-## Next Steps
+## Costs
 
-1. Deploy OnlyOffice: `azd up`
-2. Configure `lyoko-web` to use it
-3. Test opening/editing Excel files
-4. Proceed with migration plan (Phase 3: Backend Integration)
+**Node Pool**: ~$140/month per node (D4s_v3)
+- Min 1 node = ~$140/month
+- With autoscaling max 5 = up to ~$700/month under heavy load
+
+**Storage**: ~$10/month (80GB managed disks)
+
+**Total baseline**: ~$150/month
+
+## Cleanup
+
+```bash
+# Delete K8s resources
+kubectl delete namespace lyoko-onlyoffice
+
+# Delete node pool (optional)
+az aks nodepool delete \
+  --resource-group rg-lyoko \
+  --cluster-name lyoko-aks \
+  --name onlyoffice
+```

@@ -1,0 +1,43 @@
+#===============================================================================
+# LYOKO ONLYOFFICE - SERVICE
+#===============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: onlyoffice
+  namespace: lyoko-onlyoffice
+  labels:
+    app: onlyoffice
+    app.kubernetes.io/name: onlyoffice
+    app.kubernetes.io/part-of: lyoko
+spec:
+  type: ClusterIP
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+  selector:
+    app: onlyoffice
+---
+#===============================================================================
+# EXTERNAL SERVICE - LoadBalancer for direct access
+#===============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: onlyoffice-external
+  namespace: lyoko-onlyoffice
+  labels:
+    app: onlyoffice
+  annotations:
+    service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthcheck
+spec:
+  type: LoadBalancer
+  ports:
+    - port: 80
+      targetPort: 80
+      protocol: TCP
+      name: http
+  selector:
+    app: onlyoffice
