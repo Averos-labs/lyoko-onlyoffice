@@ -69,9 +69,10 @@ kubectl apply -f "$SCRIPT_DIR/04-deployment.yaml"
 echo "Creating services..."
 kubectl apply -f "$SCRIPT_DIR/05-service.yaml"
 
-# 7. HPA
-echo "Creating HPA..."
-kubectl apply -f "$SCRIPT_DIR/06-hpa.yaml"
+# 7. HPA — intentionally disabled (see 06-hpa.yaml). This image cannot be
+#    horizontally scaled safely, so remove any HPA left over from older deploys.
+echo "Ensuring no stale HPA exists..."
+kubectl delete hpa onlyoffice-hpa -n "$NAMESPACE" --ignore-not-found
 
 # 8. Ingress (optional)
 if [ "$ENABLE_INGRESS" = "true" ]; then
@@ -114,10 +115,6 @@ fi
 # Show pod status
 echo -e "\n${YELLOW}Pod Status:${NC}"
 kubectl get pods -n "$NAMESPACE" -o wide
-
-# Show HPA status
-echo -e "\n${YELLOW}HPA Status:${NC}"
-kubectl get hpa -n "$NAMESPACE"
 
 # Output JWT secret for configuration
 echo -e "\n${YELLOW}=============================================================="

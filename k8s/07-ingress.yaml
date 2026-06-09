@@ -1,8 +1,10 @@
 #===============================================================================
-# LYOKO ONLYOFFICE - INGRESS (Optional - if using Ingress Controller)
+# LYOKO ONLYOFFICE - INGRESS (Optional - if using an nginx Ingress Controller)
 #===============================================================================
-# Uncomment and configure if using nginx-ingress or similar
-# Otherwise, use the LoadBalancer service directly
+# Only needed if you front the Document Server with an nginx ingress controller.
+# The default deployment instead exposes the `onlyoffice-external` LoadBalancer
+# directly, with TLS terminated upstream (e.g. Cloudflare) for docs.averoslab.com.
+# Enable this only when ENABLE_INGRESS=true and an nginx controller is installed.
 #===============================================================================
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -19,16 +21,21 @@ metadata:
     nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
     # WebSocket support
     nginx.ingress.kubernetes.io/proxy-http-version: "1.1"
-    nginx.ingress.kubernetes.io/upstream-hash-by: "$request_uri"
+    # Sticky sessions: OnlyOffice co-editing needs a client pinned to one pod.
+    # Use cookie-based affinity (NOT upstream-hash-by, which shards by URL and
+    # would split a single document's requests across pods).
+    nginx.ingress.kubernetes.io/affinity: "cookie"
+    nginx.ingress.kubernetes.io/affinity-mode: "persistent"
+    nginx.ingress.kubernetes.io/session-cookie-name: "onlyoffice-affinity"
     # SSL
     cert-manager.io/cluster-issuer: "letsencrypt-prod"
 spec:
   tls:
     - hosts:
-        - onlyoffice.lyoko.app
+        - docs.averoslab.com
       secretName: onlyoffice-tls
   rules:
-    - host: onlyoffice.lyoko.app
+    - host: docs.averoslab.com
       http:
         paths:
           - path: /

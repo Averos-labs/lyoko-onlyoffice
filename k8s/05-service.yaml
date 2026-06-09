@@ -12,6 +12,13 @@ metadata:
     app.kubernetes.io/part-of: lyoko
 spec:
   type: ClusterIP
+  # OnlyOffice co-editing uses long-lived WebSocket connections that must stay
+  # pinned to the same backend pod. Pin by client IP as defense-in-depth (the
+  # deployment is single-replica today; this keeps correctness if it ever isn't).
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
   ports:
     - port: 80
       targetPort: 80
@@ -34,6 +41,11 @@ metadata:
     service.beta.kubernetes.io/azure-load-balancer-health-probe-request-path: /healthcheck
 spec:
   type: LoadBalancer
+  # Keep a client's WebSocket co-editing traffic on one backend pod.
+  sessionAffinity: ClientIP
+  sessionAffinityConfig:
+    clientIP:
+      timeoutSeconds: 10800
   ports:
     - port: 80
       targetPort: 80

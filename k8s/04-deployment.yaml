@@ -18,15 +18,27 @@ metadata:
     app.kubernetes.io/part-of: lyoko
     app.kubernetes.io/component: document-server
 spec:
+  # IMPORTANT: keep this at 1.
+  # The standard onlyoffice/documentserver image bundles its own PostgreSQL,
+  # RabbitMQ and Redis *inside the pod*, and its co-editing state lives in that
+  # single instance. Running more than one replica of this image means two users
+  # editing the same document can land on different pods -> split-brain sessions
+  # and silent last-write-wins data loss. The ReadWriteOnce PVCs below also cannot
+  # be mounted by a second pod on another node (Multi-Attach error).
+  # To scale horizontally you must deploy the HA topology (external shared
+  # PostgreSQL + RabbitMQ + Redis + multiple stateless DS pods + sticky sessions).
+  # Until then, scale vertically via the resource limits below. The HPA in
+  # 06-hpa.yaml is intentionally disabled for this reason.
   replicas: 1
   selector:
     matchLabels:
       app: onlyoffice
   strategy:
-    type: RollingUpdate
-    rollingUpdate:
-      maxUnavailable: 0
-      maxSurge: 1
+    # Recreate (not RollingUpdate): the RWO PVCs can only be attached to one pod
+    # at a time, so a surge pod during a rolling update would deadlock on a
+    # Multi-Attach error. Recreate tears down the old pod (releasing the disk)
+    # before starting the new one.
+    type: Recreate
   template:
     metadata:
       labels:
@@ -167,7 +179,10 @@ metadata:
   name: onlyoffice-pdb
   namespace: lyoko-onlyoffice
 spec:
-  minAvailable: 1
+  # Single-replica stateful app: allow the one pod to be evicted so node drains
+  # and cluster upgrades are not blocked. (minAvailable: 1 here would deadlock
+  # drains because there is no second replica to keep available.)
+  maxUnavailable: 1
   selector:
     matchLabels:
       app: onlyoffice

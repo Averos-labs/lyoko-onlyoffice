@@ -93,7 +93,10 @@ jobs:
         run: |
           kubectl apply -f k8s/04-deployment.yaml
           kubectl apply -f k8s/05-service.yaml
-          kubectl apply -f k8s/06-hpa.yaml
+          # HPA is intentionally disabled (06-hpa.yaml is documentation-only).
+          # This image cannot be horizontally scaled safely, so remove any HPA
+          # left over from a previous deploy.
+          kubectl delete hpa onlyoffice-hpa -n lyoko-onlyoffice --ignore-not-found
 
       - name: Wait for deployment
         run: |

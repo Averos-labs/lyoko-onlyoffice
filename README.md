@@ -8,9 +8,18 @@ Production-ready OnlyOffice Document Server deployment for AKS with autoscaling.
 AKS Cluster (lyoko-aks)
 ├── System Pool (D2s_v3) - orchestrator, redis
 ├── Sandbox Pool (D4s_v3, 1-10) - sandbox workers
-└── OnlyOffice Pool (D4s_v3, 1-5) - document server ← NEW
-    └── HPA: 1-5 pods based on CPU/memory
+└── OnlyOffice Pool (D4s_v3) - document server ← NEW
+    └── Single replica (scaled vertically; see "Scaling" below)
 ```
+
+> **Scaling note:** The `onlyoffice/documentserver` image is a single-instance
+> product (it bundles its own PostgreSQL/RabbitMQ/Redis and keeps co-editing
+> state in-pod). It runs as a **single replica** and is scaled **vertically**.
+> Horizontal autoscaling is intentionally disabled — running multiple replicas
+> of this image corrupts co-editing sessions and deadlocks the ReadWriteOnce
+> PVCs. To serve many concurrent editors via horizontal scaling you must deploy
+> the OnlyOffice **HA topology** (external shared PostgreSQL + RabbitMQ + Redis,
+> multiple stateless DS pods, and a load balancer with session affinity).
 
 ## Deployment Options
 
@@ -75,17 +84,16 @@ Access at: http://localhost:8080
 | `03-pvc.yaml` | Persistent storage (50GB data, 20GB cache) |
 | `04-deployment.yaml` | OnlyOffice deployment + PDB |
 | `05-service.yaml` | ClusterIP + LoadBalancer services |
-| `06-hpa.yaml` | Horizontal Pod Autoscaler |
+| `06-hpa.yaml` | (Disabled) Notes on why autoscaling is not used |
 | `07-ingress.yaml` | Ingress (optional) |
 
 ## Autoscaling Configuration
 
-### HPA (Pod Autoscaling)
-- **Min replicas**: 1 (always warm - no cold start latency)
-- **Max replicas**: 5
-- **Scale up triggers**: CPU > 70% or Memory > 80%
-- **Scale up policy**: Add up to 2 pods per minute
-- **Scale down policy**: Remove 1 pod every 2 minutes (stabilization: 5 min)
+### Pod Scaling (Vertical only)
+- **Replicas**: fixed at 1 (this image is single-instance — see Scaling note above)
+- **HPA**: intentionally disabled (`06-hpa.yaml` is documentation-only)
+- **Scale up**: increase the CPU/memory limits in `04-deployment.yaml`
+- **Rollouts**: `Recreate` strategy (required because the PVCs are ReadWriteOnce)
 
 ### Node Pool (Cluster Autoscaling)
 - **Min nodes**: 1

@@ -9,7 +9,8 @@ metadata:
 data:
   # JWT Configuration
   jwt-enabled: "true"
-  jwt-header: "Authorization"
+  # Use a custom header so outbound download requests to SAS URLs do not send Authorization.
+  jwt-header: "X-Onlyoffice-Token"
   jwt-in-body: "true"
   
   # WOPI Configuration (for future Office integrations)
@@ -21,5 +22,6 @@ data:
   # File size limits (in bytes) - 100MB
   file-size-limit: "104857600"
   
-  # Document server URL (will be set by ingress)
-  server-url: "https://onlyoffice.lyoko.app"
+  # Public document server URL (browser-facing, TLS-terminated upstream).
+  # Must match onlyoffice-public-url in the lyoko-web configmap.
+  server-url: "https://docs.averoslab.com"
